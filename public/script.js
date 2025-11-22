@@ -664,3 +664,165 @@ async function confirmBatchMove() {
     document.getElementById('moveModal').style.display = 'none';
     fetchFiles();
 }
+// ==========================================
+// 新增：拖拽上传功能逻辑
+// ==========================================
+
+(function initDragAndDrop() {
+    const dropZone = document.querySelector('.card-upload');
+
+    // 1. 阻止默认行为（防止浏览器直接打开文件）
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    // 2. 添加视觉反馈（鼠标拖入时高亮）
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, highlight, false);
+    });
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, unhighlight, false);
+    });
+
+    function highlight(e) {
+        dropZone.classList.add('drag-over');
+    }
+
+    function unhighlight(e) {
+        dropZone.classList.remove('drag-over');
+    }
+
+    // 3. 处理文件放下事件
+    dropZone.addEventListener('drop', handleDrop, false);
+
+    function handleDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files.length > 0) {
+            // 显示已选文件（复用原有的显示逻辑，但稍作修改以适应FileList）
+            showDroppedFilesInfo(files);
+            // 自动开始上传
+            uploadDroppedFiles(files);
+        }
+    }
+})();
+
+// 辅助：显示拖拽的文件名
+function showDroppedFilesInfo(files) {
+    const selectedDiv = document.getElementById('selectedFiles');
+    selectedDiv.style.display = 'block';
+    selectedDiv.style.minHeight = '5rem';
+    
+    const maxShow = 8;
+    let html = '<b>待上传文件（拖拽）：</b><ul style="margin:4px 0 0 0;padding-left:18px;">';
+    for (let i = 0; i < Math.min(files.length, maxShow); i++) {
+        html += `<li>${files[i].name}</li>`;
+    }
+    if (files.length > maxShow) {
+        html += `<li>...等${files.length}个文件</li>`;
+    }
+    html += '</ul>';
+    selectedDiv.innerHTML = html;
+}
+
+// 核心：处理拖拽文件的上传（逻辑修改自原 uploadFile 函数）
+async function uploadDroppedFiles(files) {
+    const subdirSelect = document.getElementById('subdirSelect');
+    const subdir = subdirSelect.value; // 获取当前选择的子目录
+    
+    // 进度条容器
+    const progressContainer = document.createElement('div');
+    progressContainer.className = 'progress-container';
+    progressContainer.innerHTML = '<div class="progress-bar" id="dropProgressBar">0%</div>';
+    
+    // 取消按钮
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = '取消';
+    cancelBtn.className = 'cancel-btn';
+    cancelBtn.style.right = '-75px';
+    
+    let aborted = false;
+    cancelBtn.onclick = function() {
+        aborted = true;
+        progressContainer.remove();
+        document.getElementById('uploadStatus').textContent = '已取消上传';
+        document.getElementById('selectedFiles').innerHTML = '';
+    };
+    progressContainer.appendChild(cancelBtn);
+    document.querySelector('.card-upload').appendChild(progressContainer);
+    
+    const progressBar = document.getElementById('dropProgressBar');
+    const statusDiv = document.getElementById('uploadStatus');
+    let uploaded = 0;
+
+    // 循环上传文件
+    for (let i = 0; i < files.length; i++) {
+        if (aborted) break;
+        await new Promise((resolve) => {
+            const file = files[i];
+            const formData = new FormData();
+            formData.append('file', file, file.name);
+            
+            // 注意：拖拽上传通常不带 webkitRelativePath，除非专门处理文件夹
+            // 这里直接使用 subdir 和 filename
+            const url = '/api/upload?subdir=' + encodeURIComponent(subdir) +
+                '&filename=' + encodeURIComponent(utf8ToBase64(file.name));
+
+            const xhr = new XMLHttpRequest();
+            xhr.upload.addEventListener('progress', (event) => {
+                if (event.lengthComputable) {
+                    const percent = Math.round((event.loaded / event.total) * 100);
+                    progressBar.style.width = percent + '%';
+                    progressBar.textContent = `(${i+1}/${files.length}) ` + percent + '%';
+                }
+            });
+
+            xhr.onload = function() { resolve(); };
+            xhr.onerror = function() { resolve(); };
+            xhr.onabort = function() { resolve(); };
+            
+            // 绑定取消事件到当前请求
+            cancelBtn.onclick = function() {
+                aborted = true;
+                xhr.abort();
+                progressContainer.remove();
+                document.getElementById('uploadStatus').textContent = '已取消上传';
+                document.getElementById('selectedFiles').innerHTML = '';
+            };
+            
+            xhr.open('POST', url);
+            xhr.send(formData);
+        });
+        
+        uploaded++;
+        progressBar.style.width = '100%';
+        progressBar.textContent = `(${uploaded}/${files.length}) 100%`;
+    }
+
+    // 完成后的清理
+    if (!aborted) {
+        statusDiv.textContent = 'Upload completed successfully!';
+        statusDiv.style.color = '#43a047';
+        setTimeout(() => {
+            progressContainer.remove();
+            statusDiv.textContent = '';
+            document.getElementById('selectedFiles').innerHTML = '';
+            // 重置高度和padding逻辑与原代码保持一致
+            const cardUpload = document.querySelector('.card-upload');
+            if (cardUpload) {
+                // cardUpload.style.minHeight = '120px'; // 根据你的原CSS调整
+                // 清除残留
+                const children = Array.from(cardUpload.children);
+                children.forEach(child => {
+                    if (child.classList && child.classList.contains('progress-container')) child.remove();
+                });
+            }
+        }, 1500);
+        fetchFiles(); // 刷新文件列表
+    }
+}
