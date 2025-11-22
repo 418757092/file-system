@@ -715,3 +715,24 @@ footer.copyright-bar svg {
     vertical-align: middle;
     transition: color 0.2s;
 }
+/* 新增拖拽样式 */
+.card-upload {
+    transition: all 0.2s ease;
+    position: relative; /* 为提示文字定位 */
+}
+
+.card-upload.drag-over {
+    border: 2px dashed #1976d2;
+    background-color: #e3f2fd;
+    transform: scale(1.01);
+}
+
+/* 拖拽提示文字样式 */
+.drag-hint {
+    text-align: center;
+    color: #999;
+    font-size: 0.9rem;
+    margin-top: 15px;
+    margin-bottom: 15px;
+    pointer-events: none; /* 防止文字阻挡鼠标事件 */
+}
