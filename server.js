@@ -51,17 +51,56 @@ const authMiddleware = basicAuth({
 
 // 文件存储配置
 const storage = multer.diskStorage({
+    // 【安全修复】修复了 destination 中的路径遍历漏洞
     destination: (req, file, cb) => {
-        const subdir = req.query.subdir;
-        let uploadDir = subdir ? path.join(FILES_DIR, subdir) : FILES_DIR;
-        const relativePath = req.query.relativePath;
-        if (relativePath) {
-            // 去掉文件名部分，只保留目录
-            const relDir = path.dirname(relativePath);
-            uploadDir = path.join(uploadDir, relDir);
+        let uploadDir = FILES_DIR;
+
+        try {
+            // 1. 处理 subdir (用户选的分类目录)
+            const subdir = req.query.subdir;
+            if (subdir) {
+                // 使用 sanitizePath 检查是否包含 ".."
+                const safeSubdir = sanitizePath(subdir);
+                const targetPath = path.join(FILES_DIR, safeSubdir);
+                
+                // 双重保险：检查最终解析路径是否仍在 FILES_DIR 开头
+                if (!targetPath.startsWith(FILES_DIR)) {
+                    throw new Error('Access denied: Invalid subdir path');
+                }
+                uploadDir = targetPath;
+            }
+
+            // 2. 处理 relativePath (文件夹拖拽上传时的相对路径)
+            const relativePath = req.query.relativePath;
+            if (relativePath) {
+                const relDir = path.dirname(relativePath);
+                // 只有当 relDir 不是当前目录且不为空时才处理
+                if (relDir !== '.' && relDir !== '') {
+                    // 检查相对路径中是否包含 ".."
+                    if (relDir.includes('..')) {
+                        throw new Error('Access denied: Path traversal detected in relativePath');
+                    }
+                    
+                    const finalPath = path.join(uploadDir, relDir);
+                    // 再次检查最终路径是否越界
+                    if (!finalPath.startsWith(FILES_DIR)) {
+                        throw new Error('Access denied: Invalid folder structure');
+                    }
+                    uploadDir = finalPath;
+                }
+            }
+
+            // 如果目录不存在，安全地创建
+            if (!fs.existsSync(uploadDir)) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+            }
+
+            cb(null, uploadDir);
+
+        } catch (error) {
+            // 将安全检查的错误传递给 multer，这将终止上传
+            cb(error);
         }
-        try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) {}
-        cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
         let filename = file.originalname;
@@ -306,3 +345,4 @@ app.listen(PORT, () => {
     console.log(`Basic Auth credentials: ${USERNAME}/${PASSWORD}`);
     console.log(`Server is running on http://localhost:${PORT}`);
 });
+
